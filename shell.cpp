@@ -18,8 +18,7 @@ using namespace std;
 #define S_OPEN_REDIR_W (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
 void convertPath(string &ret, string path, string home);
-bool isOp(string str);
-void processInput(vector<vector<string> > &cmdls, string &pwd, string &oldpwd);
+void processInput(vector<vector<string> > &cmdls, string &pwd);
 
 int main(){
     //set up global variables
@@ -29,7 +28,8 @@ int main(){
     bool running = true;
     vector<int> pidList;
     int child = 0;
-    string home = HOME_DIR + getenv("USER");
+    string home = HOME_DIR;
+    home += getenv("USER");
     
     //set up terminal base
     string newpwd;
@@ -55,12 +55,15 @@ int main(){
             cout << "Exiting" << endl;
             break;
         }
+
+        //check for cd
         
         //fill command list
         vector<vector<string> > cmdls;
         vector<string> temp;
         cmdls.push_back(temp);
-        
+       
+        bool doProcessing = true; 
         int quote = -1;
         int tickq = -1;
         int whitespace = 0;
@@ -107,10 +110,18 @@ int main(){
                 //operator will exist at start of vector
                 cmdls[process].push_back(input.substr(i, 1));
                 
-                //add next process space in
-                process++;
-                vector<string> temp;
-                cmdls.push_back(temp);
+                //add next process space in WHEN PIPING
+                if(input[i] == '|'){
+                    process++;
+                    vector<string> temp;
+                    cmdls.push_back(temp);
+                }
+                
+                //make sure valid string from ampersand
+                else if(input[i] == '&' && i+1 != input.size()){
+                    cout << "Invalid input. Ampersand should be last character" << endl;
+                    doProcessing = false;
+                }
                 
                 //next string could exist immediately after
                 whitespace = i+1;
@@ -135,7 +146,9 @@ int main(){
         }
 
         //process the input and execute
-        processInput(cmdls, pwd, oldpwd);
+        if(doProcessing){
+            processInput(cmdls, pwd);
+        }
 
         //for debugging purposes
         for(int i = 0; i < cmdls.size(); i++){
@@ -171,25 +184,19 @@ void convertPath(string &ret, string path, string home){
     ret = buf;
 }
 
-bool isOperator(string str){
-    if(str.size() != 1) { return false; }
-
-    return str[0] == '|' || str[0] == '>' || str[0] == '<' || str[0] == '&';
-}
-
-void processInput(vector<vector<string> > &cmdls, string &pwd, string &oldpwd){
-//    char* args[] = {"ls", "-l", NULL};
-//    execvp("ls", args);
-
-    //loop through the processes
+void processInput(vector<vector<string> > &cmdls, string &pwd){
+    //loop through the processes (all split by pipes)
     for(int p = 0; p < cmdls.size(); p++){
-        //FILL (fd setting)
-
-        int pid = fork();
-        if(!pid){}
-        else{}
+        string last = cmdls[p][cmdls[p].size()-1];
+        //check if pipe occurs to another process
+        if(last.size() == 1 && last[0] == '|') {
+            //FILL
+        }
+        //if this is the last process
+        else{
+            //FILL
+        }
     }
-    //FILL
 }
 
 void examples(){
