@@ -28,7 +28,7 @@ int main(){
     home += getenv("USER");
 
     //set up terminal base
-        //TODO: start at home directory
+    chdir(home.c_str());
     
     //go until shell exits
     while(running){
@@ -38,6 +38,8 @@ int main(){
         //read input
         string input = "";
         getline(cin, input);
+        int baseIn = input.find_first_not_of(" \t");
+        input = input.substr(baseIn, input.find_last_not_of(" \t") - baseIn+1);
 
         //check for exit
         if(input.compare("exit") == 0){
@@ -45,8 +47,46 @@ int main(){
             break;
         }
 
-        //check for cd
-        //TODO ^
+        //check for cd  
+        int cdLocation = input.find("cd ");
+        if(cdLocation == 0){
+            //get string of just the directory
+            string newpwd = input.substr(3);
+            int dirStart = newpwd.find_first_not_of(" \t");
+            newpwd = newpwd.substr(dirStart);
+
+            //if going to previous directory
+            if(newpwd.find("-") == 0 && newpwd.size() == 1){
+                string temp = oldpwd;
+                if(temp.find("~") == 0){
+                    temp.replace(0, 1, home);
+                }
+                chdir(temp.c_str());
+                temp = oldpwd;
+                oldpwd = pwd;
+                pwd = temp;
+            }
+            //else try to go to input directory
+            else{
+                //try to change to directory
+                if(!chdir(newpwd.c_str())){
+                    char cwd[512];
+                    getcwd(cwd, 512);
+                    newpwd = cwd;
+                    if(newpwd.find(home) == 0){
+                        newpwd.replace(0, home.size(), "~");
+                    }
+                    oldpwd = pwd;
+                    pwd = newpwd;
+                }
+                //else input directory was invalid
+                else{
+                    cout << "Failed to change directories" << endl;
+                }
+            }
+            continue;
+        }
+        
 
         //fill vector of processes
         vector<string> processes;
