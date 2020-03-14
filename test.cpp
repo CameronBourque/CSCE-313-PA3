@@ -15,11 +15,12 @@ using namespace std;
 #define PROMPT ("shell:")
 #define PROMPT_POST ("$")
 #define HOME_DIR ("/home/")
-#define O_OPEN_REDIR (O_CREAT | O_WRONLY | O_TRUNC)
-#define S_OPEN_REDIR (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+#define O_REDIR_O (O_CREAT | O_WRONLY | O_TRUNC)
+#define O_REDIR_I (O_RDONLY)
+#define S_REDIR (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 #define BUF_SIZE (1024)
 
-//                                            HELPER METHODS
+//THIS IS FOR CHANGING DIRECTORIES AFTER USER INPUTS "cd ..."
 void changeDirectories(string home, string newpwd, string &pwd, string &oldpwd){
     //if going to previous directory
     if(newpwd.find("-") == 0 && newpwd.size() == 1){
@@ -52,11 +53,8 @@ void changeDirectories(string home, string newpwd, string &pwd, string &oldpwd){
     }
 }
 
-int execute(char** args, bool pipeps){
-    int fds[2];
-    if(pipe){
-        pipe(fds);
-    }
+//THIS EXECUTES A LIST OF ARGUMENTS AND PIPES THEIR OUTPUT IF NEEDED
+int execute(char** args){
 
     int ret = fork();
     if(ret == -1){
@@ -66,17 +64,59 @@ int execute(char** args, bool pipeps){
         execvp(args[0], args);
     }
     return ret;
-
 }
 
-int processRedirection(char** args, string* in, int inSize, int index, vector<int> &pidList, int &child, bool pipeps){
+//THIS PROCESSES REDIRECTION WHICH WILL REPLACE STDIN AND STDOUT
+bool processRedirection(char** args, string* in, int inSize, int index, int &fileIn, int &fileOut){
+    //check for invalid input
+    if(index+1 == inSize){ cout << "Invalid input" << endl; return false; }
 
-    //TODO FILL
+    //if reading from file
+    if(in[index].compare("<") == 0){
+        //try to open the file
+        string filename = in[++index];
+        fileIn = open(filename.c_str(), O_REDIR_I, S_REDIR);
 
-    return -1;
+        //handle open failure
+        if(fileIn == -1){ cout << "Failed to open file: " << filename << endl; return false; }
+
+        //make file the stdin
+        dup2(fileIn, 0);
+
+        //see if need to keep doing redirection
+        index++;
+        if(index < inSize && (in[index].compare("<") == 0 || in[index].compare(">") == 0)){
+            return processRedirection(args, in, inSize, index, fileIn, fileOut);
+        }
+    }
+    //else if writing to file
+    else if(in[index].compare(">") == 0){
+        //try to open the file
+        string filename = in[++index];
+        fileOut = open(filename.c_str(), O_REDIR_O, S_REDIR);
+
+        //handle open failure
+        if(fileOut == -1){ cout << "Failed to open file: " << filename << endl; return false; }
+
+        //make file the stdin
+        dup2(fileOut, 1);
+
+        //see if need to keep doing redirection
+        index++;
+        if(index < inSize && (in[index].compare("<") == 0 || in[index].compare(">") == 0)){
+            return processRedirection(args, in, inSize, index, fileIn, fileOut);
+        }
+    }
+    else{
+        cout << "A bug caused the code to reach this point" << endl;
+        return false;
+    }
+
+    return true;
 }
 
-bool processInput(vector<string> input, vector<int> &pidList, int &child){
+//THIS ORGANIZES INPUT VALUES TO BE EXECUTED PROPERLY
+bool processInput(vector<string> input, vector<int> &pidList){
     int stdoutfd = dup(1); //need a backup of stdout
     int stdinfd = dup(0);  //need a backup of stdin
 
@@ -84,7 +124,7 @@ bool processInput(vector<string> input, vector<int> &pidList, int &child){
         int baseIn = input[i].find_first_not_of(TRIM);
         input[i] = input[i].substr(baseIn, input[i].find_last_not_of(TRIM) - baseIn+1);
 
-        //DEBUG ---- TODO REMOVE LATER
+        //DEBUG FOR PIPES ---- TODO REMOVE LATER
         cout << input[i] << endl;
 
         int ws = 0;
@@ -154,12 +194,6 @@ bool processInput(vector<string> input, vector<int> &pidList, int &child){
             sArgs[sIndex++] = input[i].substr(ws);
         }
 
-        //DEBUG ---- TODO REMOVE LATER
-        for(int j = 0; j < sIndex; j++){
-            cout << "[START:" << sArgs[j] << ":END]" << endl;
-        }
-        cout << "exe list: " << endl;
-
         //fill the execution list
         char** args = new char*[BUF_SIZE];
         int argsIndex = 0;
@@ -172,104 +206,102 @@ bool processInput(vector<string> input, vector<int> &pidList, int &child){
                 char* temp = new char[BUF_SIZE];
                 strcpy(temp, sArgs[j].c_str());
                 args[argsIndex++] = temp;
-                //DEBUG ---- TODO REMOVE LATER
-                cout << sArgs[j] << ", ";
             }
         }
         args[argsIndex++] = NULL;
-        //DEBUG ---- TODO REMOVE LATER
-        cout << "\\0" << endl;
 
-        bool pipeps = i+1 != input.size();
+        //bool pipeps = i+1 != input.size();
+        int fds[2];
 
         //processes redirections
         if(sArgs[j].compare("<") == 0 || sArgs[j].compare(">") == 0){
             //this could be recursive
-            int ret = processRedirection(args, sArgs, sIndex, j, pidList, child, pipeps);
+            bool ret = processRedirection(args, sArgs, sIndex, j, fds[0], fds[1]);
 
-            //execution failure safety
-            if(!ret){ return false; }
-            //fork failure safety
-            else if(ret == -1){ return true; }
+            //on failure to redirect
+            if(!ret){
+                //close the fds
+                try {
+                    close(fds[0]);
+                }
+                catch(int e){}
+                try{
+                    close(fds[1]);
+                }
+                catch(int e){}
+
+                //reattach stdout and stdin
+                dup2(stdoutfd, 1);
+                dup2(stdinfd, 0);
+
+                //delete heap instantiations
+                delete [] sArgs;
+                delete [] args;
+
+                //continue without executing
+                return true;
+            }
         }
+
         //execute the arguments
+        int pid = execute(args);
+
+        //execution or fork failure safety
+        if(!pid || pid == -1){
+            //close fds
+            try{ close(fds[0]); }
+            catch(int e){}
+            try{ close(fds[1]); }
+            catch(int e){}
+
+            //reattach stdout and stdin
+            dup2(stdoutfd, 1);
+            dup2(stdinfd, 0);
+
+            //child process should not duplicate parent
+            if(!pid){ return false; }
+
+            //delete heap instantiations
+            delete [] sArgs;
+            delete [] args;
+
+            //continue without execution
+            return true;
+        }
+
+        //see if need to run in background or not
+        if(j < sIndex && sArgs[j].compare("&") == 0){
+            //store child pid
+            pidList.push_back(pid);
+        }
         else{
-            //see if need to run in background or not
-            if(sArgs[j].compare("&") == 0){
-                int pid = execute(args, pipeps);
-
-                //execution failure safety
-                if(!pid){ return false; }
-                //fork failure safety
-                else if(pid == -1){ return true; }
-
-                //store child pid
-                pidList.push_back(pid);
-            }
-            else{
-                child = execute(args, pipeps);
-
-                //execution failure safety
-                if(!child){ return false; }
-                //fork failure safety
-                else if(child == -1){ child = 0; return true; }
-
-                //wait on child to terminate
-                wait(&child);
-            }
+            //wait on child to terminate TODO need to fix for only the last level of pipes
+            waitpid(pid, 0, 0);
         }
 
         //delete what was allocated on heap
         delete [] sArgs;
         delete [] args;
 
-#if 0
-        char* args[processes[i].size()];
-        int ws = 0;
-        int index = 0;
-        string filename = "";
-        for(int j = 0; j < processes[i].size(); j++){
-            if(isspace(processes[i][j])){
-                if(ws != j){
-                    char* temp = new char[j-ws+1];
-                    strcpy(temp, processes[i].substr(ws, j-ws).c_str());
-                    args[index++] = temp;
-                }
-                ws = j+1;
-            }
+        //close the fds
+        try {
+            close(fds[0]);
         }
-        char* temp = new char[processes[0].size()-ws+1];
-        strcpy(temp, processes[i].substr(ws).c_str());
-        args[index++] = temp;
-        args[index] = NULL;
-
-        //fork out child to execute with arguments
-        child = fork();
-        if(!child){
-            execvp(args[0], args);
-            cout << "Failed to execute command " << args[0] << endl;
-            running = false;
+        catch(int e){}
+        try{
+            close(fds[1]);
         }
-        else{
-            //wait on child process
-            wait(&child);
-
-            //remove memory leaks
-            for(int k = 0; args[k] != NULL; k++){
-                delete [] args[k];
-            }
-        }
-#endif
+        catch(int e){}
     }
 
     //reattach stdout and stdin
-    dup2(1, stdoutfd);
-    dup2(0, stdinfd);
+    dup2(stdoutfd, 1);
+    dup2(stdinfd, 0);
 
     return true;
 }
 
-//                                                  MAIN METHOD
+//THIS IS THE MAIN LOOP OF THE WHOLE PROGRAM AND KEEPS TRACK OF THE IMPORTANT VARIABLES
 int main(){
     //set up variables for keeping track of important things
     string pwd = "~";
@@ -294,6 +326,11 @@ int main(){
         //read input
         string input = "";
         getline(cin, input);
+
+        //prevent segfault
+        if(input.size() == 0){ continue; }
+
+        //trim leading and trailing whitespace
         int baseIn = input.find_first_not_of(TRIM);
         input = input.substr(baseIn, input.find_last_not_of(TRIM) - baseIn+1);
 
@@ -301,6 +338,26 @@ int main(){
         if(input.compare("exit") == 0){
             cout << "Exiting" << endl;
             break;
+        }
+
+        //check for jobs
+        if(input.compare("jobs") == 0){
+            int count = 1;
+            for(int i = 0; i < pidList.size(); i++){
+                //determine if child is running
+                int pid = waitpid(pidList[i], 0, WNOHANG);
+                if(pid){
+                    pidList.erase(pidList.begin() + i);
+                    i--;
+                    cout << "[" << count << "]\t" << "Done" << endl;
+                }
+                else{
+                    cout << "[" << count << "]\t" << "Running" << endl;
+                }
+                count++;
+            }
+
+            continue;
         }
 
         //check for cd  
@@ -348,7 +405,20 @@ int main(){
             processes.push_back(input.substr(shdw));
         }
 
-        running = processInput(processes, pidList, child);
+        //try to execute
+        running = processInput(processes, pidList);
+
+        //check for background processes
+        int count = 1;
+        for(int i = 0; i < pidList.size(); i++){
+            int pid = waitpid(pidList[i], 0, WNOHANG);
+            if(pid){
+                pidList.erase(pidList.begin() + i);
+                i--;
+                cout << "[" << count << "]\t" << "PID: " << pid << "\tDone" << endl;
+            }
+            count++;
+        }
     }
 
     //for immersion
