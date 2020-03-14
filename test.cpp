@@ -33,7 +33,7 @@ void changeDirectories(string home, string newpwd, string &pwd, string &oldpwd){
         oldpwd = pwd;
         pwd = temp;
     }
-        //else try to go to input directory
+    //else try to go to input directory
     else{
         //try to change to directory
         if(!chdir(newpwd.c_str())){
@@ -55,7 +55,6 @@ void changeDirectories(string home, string newpwd, string &pwd, string &oldpwd){
 
 //THIS EXECUTES A LIST OF ARGUMENTS AND PIPES THEIR OUTPUT IF NEEDED
 int execute(char** args){
-
     int ret = fork();
     if(ret == -1){
         cout << "Failed to create child process" << endl;
@@ -73,6 +72,10 @@ bool processRedirection(char** args, string* in, int inSize, int index, int &fil
 
     //if reading from file
     if(in[index].compare("<") == 0){
+        //need to close out old input file
+        try{ close(fileIn); }
+        catch(int e){}
+
         //try to open the file
         string filename = in[++index];
         fileIn = open(filename.c_str(), O_REDIR_I, S_REDIR);
@@ -82,15 +85,13 @@ bool processRedirection(char** args, string* in, int inSize, int index, int &fil
 
         //make file the stdin
         dup2(fileIn, 0);
-
-        //see if need to keep doing redirection
-        index++;
-        if(index < inSize && (in[index].compare("<") == 0 || in[index].compare(">") == 0)){
-            return processRedirection(args, in, inSize, index, fileIn, fileOut);
-        }
     }
     //else if writing to file
     else if(in[index].compare(">") == 0){
+        //need to close out old output file
+        try{ close(fileOut); }
+        catch(int e){}
+
         //try to open the file
         string filename = in[++index];
         fileOut = open(filename.c_str(), O_REDIR_O, S_REDIR);
@@ -100,18 +101,19 @@ bool processRedirection(char** args, string* in, int inSize, int index, int &fil
 
         //make file the stdin
         dup2(fileOut, 1);
-
-        //see if need to keep doing redirection
-        index++;
-        if(index < inSize && (in[index].compare("<") == 0 || in[index].compare(">") == 0)){
-            return processRedirection(args, in, inSize, index, fileIn, fileOut);
-        }
     }
     else{
         cout << "A bug caused the code to reach this point" << endl;
         return false;
     }
 
+    //see if need to keep doing redirection
+    index++;
+    if(index < inSize && (in[index].compare("<") == 0 || in[index].compare(">") == 0)){
+        return processRedirection(args, in, inSize, index, fileIn, fileOut);
+    }
+
+    //return successful file handling on final redirection
     return true;
 }
 
@@ -120,6 +122,10 @@ bool processInput(vector<string> input, vector<int> &pidList){
     int stdoutfd = dup(1); //need a backup of stdout
     int stdinfd = dup(0);  //need a backup of stdin
 
+    //create array for file descriptors
+    int fds[2];
+
+    //each process should pipe into the next unless a redirection overrides it
     for(int i = 0; i < input.size(); i++){
         int baseIn = input[i].find_first_not_of(TRIM);
         input[i] = input[i].substr(baseIn, input[i].find_last_not_of(TRIM) - baseIn+1);
@@ -199,27 +205,55 @@ bool processInput(vector<string> input, vector<int> &pidList){
         int argsIndex = 0;
         int j;
         for(j = 0; j < sIndex; j++){
+            //the arguments exist before any operators
             if(sArgs[j].compare("<") == 0 || sArgs[j].compare(">") == 0 || sArgs[j].compare("&") == 0){
                 break;
             }
+            //add all arguments to the list
             else{
                 char* temp = new char[BUF_SIZE];
                 strcpy(temp, sArgs[j].c_str());
                 args[argsIndex++] = temp;
             }
         }
+        //add the null value to the end of the execution list
         args[argsIndex++] = NULL;
 
-        //bool pipeps = i+1 != input.size();
-        int fds[2];
+        //see if need to pipe exists
+        if(i+1 < input.size()){
+            //make sure the pipe works
+            if(pipe(fds) == -1){
+                cout << "Failed to create pipe. Not executing." << endl;
+
+                //close the fds
+                try {
+                    close(fds[0]);
+                }
+                catch(int e){}
+                try{
+                    close(fds[1]);
+                }
+                catch(int e){}
+
+                //delete heap instantiations
+                delete [] sArgs;
+                delete [] args;
+
+                //continue without executing
+                return true;
+            }
+        }
+
+        //redirection will override the pipe
+        bool redirection = false;
 
         //processes redirections
         if(sArgs[j].compare("<") == 0 || sArgs[j].compare(">") == 0){
             //this could be recursive
-            bool ret = processRedirection(args, sArgs, sIndex, j, fds[0], fds[1]);
+            redirection = processRedirection(args, sArgs, sIndex, j, fds[0], fds[1]);
 
             //on failure to redirect
-            if(!ret){
+            if(!redirection){
                 //close the fds
                 try {
                     close(fds[0]);
@@ -243,11 +277,24 @@ bool processInput(vector<string> input, vector<int> &pidList){
             }
         }
 
-        //execute the arguments
-        int pid = execute(args);
+        //get the child pid after forking
+        int pid = fork();
 
-        //execution or fork failure safety
+        //this will handle the child process and any forking error
         if(!pid || pid == -1){
+            //try to execute the child
+            if(!pid){
+                //replace the stdout to next process
+                dup2(fds[1], 1);
+
+                //execute
+                execvp(args[0], args);
+            }
+            //print out error for fork failure if that is what happened
+            else{
+                cout << "Failed to create child process" << endl;
+            }
+
             //close fds
             try{ close(fds[0]); }
             catch(int e){}
@@ -268,6 +315,14 @@ bool processInput(vector<string> input, vector<int> &pidList){
             //continue without execution
             return true;
         }
+        //this will handle the parent process
+        else{
+            //replace the stdin for next process
+            dup2(fds[0], 0);
+
+            //close the stdout to prevent any waits
+            close(fds[1]);
+        }
 
         //see if need to run in background or not
         if(j < sIndex && sArgs[j].compare("&") == 0){
@@ -275,24 +330,27 @@ bool processInput(vector<string> input, vector<int> &pidList){
             pidList.push_back(pid);
         }
         else{
+            //TODO THIS NEEDS A REWORK
             //wait on child to terminate TODO need to fix for only the last level of pipes
-            waitpid(pid, 0, 0);
+            if(i+1 == input.size()) {
+                waitpid(pid, 0, 0);
+            }
         }
 
         //delete what was allocated on heap
         delete [] sArgs;
         delete [] args;
-
-        //close the fds
-        try {
-            close(fds[0]);
-        }
-        catch(int e){}
-        try{
-            close(fds[1]);
-        }
-        catch(int e){}
     }
+
+    //close the fds
+    try {
+        close(fds[0]);
+    }
+    catch(int e){}
+    try{
+        close(fds[1]);
+    }
+    catch(int e){}
 
     //reattach stdout and stdin
     dup2(stdoutfd, 1);
