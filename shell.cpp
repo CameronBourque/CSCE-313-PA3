@@ -238,6 +238,9 @@ bool processInput(vector<string> input, vector<int> &pidList){
 
                 //delete heap instantiations
                 delete [] sArgs;
+                for(int k = 0; k < argsIndex; k++){
+                    delete [] args[k];
+                }
                 delete [] args;
 
                 //kill off prior processes, reap them and delete list
@@ -282,6 +285,9 @@ bool processInput(vector<string> input, vector<int> &pidList){
 
                 //delete heap instantiations
                 delete [] sArgs;
+                for(int k = 0; k < argsIndex; k++){
+                    delete [] args[k];
+                }
                 delete [] args;
 
                 //kill off prior processes, reap them and delete list
@@ -341,25 +347,30 @@ bool processInput(vector<string> input, vector<int> &pidList){
             dup2(stdoutfd, 1);
             dup2(stdinfd, 0);
 
-            //child process should not duplicate parent
-            if(!pid){ return false; }
-
             //delete heap instantiations
             delete [] sArgs;
+            for(int k = 0; k < argsIndex; k++){
+                delete [] args[k];
+            }
             delete [] args;
 
-            //kill off prior processes, reap them and delete list
-            for(int k = 0; k < tmpIndex; k++){
-                kill(tempPids[k], SIGTERM);
-                waitpid(tempPids[k], 0, 0);
+            //child process should not duplicate parent
+            if(!pid){
+                delete [] tempPids;
+                return false;
             }
-            delete [] tempPids;
 
             //continue without execution
             return true;
         }
         //this will handle the parent process
         else{
+
+            try{ close(infilefd); }
+            catch(int e){}
+            try{ close(outfilefd); }
+            catch(int e){}
+
             //replace the stdin for next process
             dup2(fds[0], 0);
 
@@ -385,13 +396,10 @@ bool processInput(vector<string> input, vector<int> &pidList){
 
         //delete what was allocated on heap
         delete [] sArgs;
+        for(int k = 0; k < argsIndex; k++){
+            delete [] args[k];
+        }
         delete [] args;
-
-        //try to close files from redirects
-        try{ close(infilefd); }
-        catch(int e){}
-        try{ close(outfilefd); }
-        catch(int e){}
     }
 
     //close the fds
