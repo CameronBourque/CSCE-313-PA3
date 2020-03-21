@@ -8,11 +8,12 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <stdlib.h>
+#include <sys/time.h>
+#include <netdb.h>
 
 using namespace std;
 
 #define TRIM (" \t")
-#define PROMPT ("shell:")
 #define PROMPT_POST ("$")
 #define HOME_DIR ("/home/")
 #define O_REDIR_O (O_CREAT | O_WRONLY | O_TRUNC)
@@ -22,6 +23,11 @@ using namespace std;
 
 //THIS IS FOR CHANGING DIRECTORIES AFTER USER INPUTS "cd ..."
 void changeDirectories(string home, string newpwd, string &pwd, string &oldpwd){
+    //if path is from home directory using shortcut replace with path
+    if(newpwd.find("~") == 0){
+        newpwd.replace(0, 1, home);
+    }
+
     //if going to previous directory
     if(newpwd.find("-") == 0 && newpwd.size() == 1){
         string temp = oldpwd;
@@ -382,6 +388,7 @@ bool processInput(vector<string> input, vector<int> &pidList){
         if(j < sIndex && sArgs[j].compare("&") == 0){
             //store child pid
             pidList.push_back(pid);
+            cout << "[" << pidList.size() << "] PID: " << pid << endl;
         }
         else{
             //wait on final process
@@ -408,7 +415,7 @@ bool processInput(vector<string> input, vector<int> &pidList){
     try{ close(fds[1]); }
     catch(int e){}
 
-    //wait on all reap all processes that were piped
+    //wait on all and reap all processes that were piped
     for(int i = 0; i < tmpIndex; i++){
         waitpid(tempPids[i], 0, 0);
     }
@@ -429,8 +436,14 @@ int main(){
     string oldpwd = "";
     bool running = true;
     vector<int> pidList;
-    string home = HOME_DIR;     //this stores the string equivalent of ~ for conversion purposes
-    home += getenv("USER");
+    string user = getenv("USER");
+    string home = getenv("HOME");     //this stores the string equivalent of ~ for conversion purposes
+
+    char hostname[BUF_SIZE]; //get the system name
+    gethostname(hostname, BUF_SIZE);
+    struct hostent* h;
+    h = gethostbyname(hostname);
+    string host = h->h_name;
 
     //set up terminal at home directory
     chdir(home.c_str());
@@ -440,8 +453,15 @@ int main(){
     
     //go until shell exits
     while(running){
+        //get current time
+        time_t curTime = time(0);
+        struct tm tstruct;
+        char timeBuf[BUF_SIZE];
+        tstruct = *localtime(&curTime);
+        strftime(timeBuf, BUF_SIZE, "%m/%d/%Y %I:%M:%S %p", &tstruct);
+
         //prompt input from user
-        cout << PROMPT << pwd << PROMPT_POST << " ";
+        cout << timeBuf << " " << user << "@" << host << ":" << pwd << PROMPT_POST << " ";
 
         //read input
         string input = "";
@@ -469,10 +489,10 @@ int main(){
                 if(pid){
                     pidList.erase(pidList.begin() + i);
                     i--;
-                    cout << "[" << count << "]+\t" << pid << "\tDone" << endl;
+                    cout << "[" << count << "]+\tPID: " << pid << "\tDone" << endl;
                 }
                 else{
-                    cout << "[" << count << "]+\t" << pidList[i] << "\tRunning" << endl;
+                    cout << "[" << count << "]+\tPID: " << pidList[i] << "\tRunning" << endl;
                 }
                 count++;
             }
