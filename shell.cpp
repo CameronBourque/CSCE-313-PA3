@@ -59,18 +59,6 @@ void changeDirectories(string home, string newpwd, string &pwd, string &oldpwd){
     }
 }
 
-//THIS EXECUTES A LIST OF ARGUMENTS AND PIPES THEIR OUTPUT IF NEEDED
-int execute(char** args){
-    int ret = fork();
-    if(ret == -1){
-        cout << "Failed to create child process" << endl;
-    }
-    else if(!ret){
-        execvp(args[0], args);
-    }
-    return ret;
-}
-
 //THIS PROCESSES REDIRECTION WHICH WILL REPLACE STDIN AND STDOUT
 bool processRedirection(char** args, string* in, int inSize, int index, int &fileIn, int &fileOut){
     //check for invalid input
@@ -333,6 +321,7 @@ bool processInput(vector<string> input, vector<int> &pidList){
 
                 //execute
                 execvp(args[0], args);
+                cout << "Failed to execute command" << endl;
             }
             //print out error for fork failure if that is what happened
             else{
@@ -472,6 +461,7 @@ int main(){
 
         //trim leading and trailing whitespace
         int baseIn = input.find_first_not_of(TRIM);
+        if(baseIn == -1) { continue; } //segfault prevention
         input = input.substr(baseIn, input.find_last_not_of(TRIM) - baseIn+1);
 
         //check for exit
