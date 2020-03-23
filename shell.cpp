@@ -30,10 +30,15 @@ void changeDirectories(string home, string newpwd, string &pwd, string &oldpwd){
 
     //if going to previous directory
     if(newpwd.find("-") == 0 && newpwd.size() == 1){
+        if(oldpwd.size() == 0){
+            cout << "OLDPWD not set" << endl;
+            return;
+        }
         string temp = oldpwd;
         if(temp.find("~") == 0){
             temp.replace(0, 1, home);
         }
+        cout << temp << endl;
         chdir(temp.c_str());
         temp = oldpwd;
         oldpwd = pwd;
